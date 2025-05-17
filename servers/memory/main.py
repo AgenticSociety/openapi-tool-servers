@@ -37,7 +37,7 @@ class Entity(BaseModel):
     updated_at: Optional[str] = None
     source: Optional[str] = None
     user_id: Optional[str] = None
-    tags: Optional[List[str]] = None
+    tags: Optional[List[str]] = []
 
 class Relation(BaseModel):
     from_: str = Field(..., alias="from")
@@ -107,7 +107,19 @@ def create_entities(req: CreateEntitiesRequest):
     graph = read_graph_file()
     existing = {e.name for e in graph.entities}
     now = datetime.utcnow().isoformat()
-    new_entities = [Entity(**e.dict(), created_at=now) for e in req.entities if e.name not in existing]
+    new_entities = []
+    for e in req.entities:
+        if e.name not in existing:
+            new_entities.append(Entity(
+                name=e.name,
+                entityType=e.entityType,
+                observations=e.observations,
+                created_at=e.created_at or now,
+                updated_at=e.updated_at or now,
+                source=e.source or "unspecified",
+                user_id=e.user_id or "anonymous",
+                tags=e.tags or []
+            ))
     graph.entities.extend(new_entities)
     save_graph(graph)
     return new_entities
