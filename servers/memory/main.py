@@ -23,6 +23,10 @@ app.add_middleware(
 
 MEMORY_FILE_PATH = Path(os.getenv("MEMORY_FILE_PATH", "memory.json"))
 
+# -----------------------
+# 🧠 Data Models
+# -----------------------
+
 class Entity(BaseModel):
     name: str
     entityType: str
@@ -47,11 +51,68 @@ class KnowledgeGraph(BaseModel):
     entities: List[Entity]
     relations: List[Relation]
 
+# -----------------------
+# 📦 Request Models
+# -----------------------
+
+class ObservationItem(BaseModel):
+    entityName: str
+    contents: List[str]
+
+class AddObservationsRequest(BaseModel):
+    observations: List[ObservationItem]
+
 class SearchNodesRequest(BaseModel):
     query: Optional[str] = None
     tags: Optional[List[str]] = None
     source: Optional[str] = None
     user_id: Optional[str] = None
+
+# -----------------------
+# 🧩 I/O Helpers
+# -----------------------
+
+def read_graph_file() -> KnowledgeGraph:
+    if not MEMORY_FILE_PATH.exists():
+        return KnowledgeGraph(entities=[], relations=[])
+    with open(MEMORY_FILE_PATH, "r", encoding="utf-8") as f:
+        lines = [line for line in f if line.strip()]
+        entities = []
+        relations = []
+        for line in lines:
+            item = json.loads(line)
+            if item["type"] == "entity":
+                entities.append(Entity(**item))
+            elif item["type"] == "relation":
+                relations.append(Relation(**item))
+        return KnowledgeGraph(entities=entities, relations=relations)
+
+def save_graph(graph: KnowledgeGraph):
+    lines = [json.dumps({"type": "entity", **e.dict()}) for e in graph.entities] + [
+        json.dumps({"type": "relation", **r.dict(by_alias=True)}) for r in graph.relations
+    ]
+    with open(MEMORY_FILE_PATH, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+
+# -----------------------
+# 🔧 Routes
+# -----------------------
+
+@app.post("/add_observations")
+def add_observations(req: AddObservationsRequest):
+    graph = read_graph_file()
+    result = []
+    for obs in req.observations:
+        entity = next((e for e in graph.entities if e.name == obs.entityName), None)
+        if not entity:
+            raise HTTPException(status_code=404, detail=f"Entity '{obs.entityName}' not found")
+        added = [c for c in obs.contents if c not in entity.observations]
+        if added:
+            entity.observations.extend(added)
+            entity.updated_at = datetime.utcnow().isoformat()
+        result.append({"entity": entity.name, "added": added})
+    save_graph(graph)
+    return result
 
 @app.post("/search_nodes", response_model=KnowledgeGraph)
 def search_nodes(req: SearchNodesRequest):
@@ -78,21 +139,3 @@ def search_nodes(req: SearchNodesRequest):
     names = {e.name for e in entities}
     relations = [r for r in graph.relations if r.from_ in names and r.to in names]
     return KnowledgeGraph(entities=entities, relations=relations)
-
-@app.post("/add_observations")
-def add_observations(req: AddObservationsRequest):
-    graph = read_graph_file()
-    result = []
-    for obs in req.observations:
-        entity = next((e for e in graph.entities if e.name == obs.entityName), None)
-        if not entity:
-            raise HTTPException(status_code=404, detail=f"Entity '{obs.entityName}' not found")
-        added = [c for c in obs.contents if c not in entity.observations]
-        if added:
-            entity.observations.extend(added)
-            entity.updated_at = datetime.utcnow().isoformat()
-        result.append({"entity": entity.name, "added": added})
-    save_graph(graph)
-    return result
-
-# Other endpoints remain unchanged
